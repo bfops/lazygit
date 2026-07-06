@@ -19,7 +19,7 @@ use crate::github::Gh;
 use crate::jobs::{JobEvent, JobWorker};
 use crate::log_buffer::LogBuffer;
 use crate::prefs::{DiffViewMode, Preferences};
-use crate::state::ReviewSession;
+use crate::state::{ReviewFile, ReviewSession};
 
 type Term = Terminal<CrosstermBackend<Stdout>>;
 
@@ -181,8 +181,9 @@ fn accept_selected_hunk(
     let reviewed = session.files[app.file_index].reviewed.clone();
     let next = apply_hunk(&reviewed, &h[index]);
     let outcome = session.accept_file_content_local(app.file_index, next)?;
-    app.hunk_index = 0;
-    app.message = "accepted hunk".into();
+    let remaining = current_hunks(session, app).len();
+    clamp_hunk_index(app, remaining);
+    app.message = accepted_hunk_message(remaining);
     app.logs.record(format!(
         "accepted hunk in {}",
         session.files[app.file_index].meta.path
@@ -273,12 +274,13 @@ fn draw(frame: &mut ratatui::Frame, session: &ReviewSession, app: &App) {
         .map(|(idx, file)| {
             let caught_up = file.reviewed == file.current;
             let prefix = if caught_up { "[x]" } else { "[ ]" };
+            let hunk_label = hunk_count_label(remaining_hunk_count(file));
             let style = if idx == app.file_index {
                 Style::default().fg(Color::Black).bg(Color::White)
             } else {
                 Style::default()
             };
-            ListItem::new(format!("{prefix} {}", file.meta.path)).style(style)
+            ListItem::new(format!("{prefix} {}{}", file.meta.path, hunk_label)).style(style)
         })
         .collect();
     let file_list = List::new(files).block(Block::default().title("Files").borders(Borders::ALL));
@@ -336,6 +338,7 @@ fn diff_lines(session: &ReviewSession, app: &App) -> Vec<Line<'static>> {
         return vec![Line::from("File caught up to latest PR content")];
     }
     let mut lines = Vec::new();
+    let total = h.len();
     for (hunk_idx, hunk) in h.iter().enumerate() {
         let header_style = if hunk_idx == app.hunk_index {
             Style::default()
@@ -345,7 +348,7 @@ fn diff_lines(session: &ReviewSession, app: &App) -> Vec<Line<'static>> {
             Style::default().fg(Color::DarkGray)
         };
         lines.push(Line::from(Span::styled(
-            format!("@@ hunk {} @@", hunk_idx + 1),
+            format!("@@ hunk {}/{} @@", hunk_idx + 1, total),
             header_style,
         )));
         for line in &hunk.lines {
@@ -367,6 +370,34 @@ fn diff_lines(session: &ReviewSession, app: &App) -> Vec<Line<'static>> {
         }
     }
     lines
+}
+
+fn remaining_hunk_count(file: &ReviewFile) -> usize {
+    hunks(&file.reviewed, &file.current).len()
+}
+
+fn hunk_count_label(count: usize) -> String {
+    match count {
+        0 => String::new(),
+        1 => " (1 hunk)".into(),
+        count => format!(" ({count} hunks)"),
+    }
+}
+
+fn clamp_hunk_index(app: &mut App, remaining_count: usize) {
+    if remaining_count == 0 {
+        app.hunk_index = 0;
+    } else if app.hunk_index >= remaining_count {
+        app.hunk_index = remaining_count - 1;
+    }
+}
+
+fn accepted_hunk_message(remaining_count: usize) -> String {
+    match remaining_count {
+        0 => "accepted hunk, file caught up".into(),
+        1 => "accepted hunk, 1 left".into(),
+        count => format!("accepted hunk, {count} left"),
+    }
 }
 
 fn diff_line(text: String, style: Style, app: &App) -> Line<'static> {
@@ -436,5 +467,52 @@ mod tests {
         app.pending_marks = 2;
 
         assert_eq!(job_label(&app), "refresh=pending marks=2");
+    }
+
+    #[test]
+    fn hunk_count_label_formats_counts() {
+        assert_eq!(hunk_count_label(0), "");
+        assert_eq!(hunk_count_label(1), " (1 hunk)");
+        assert_eq!(hunk_count_label(2), " (2 hunks)");
+    }
+
+    #[test]
+    fn clamp_hunk_index_keeps_valid_index() {
+        let logs = LogBuffer::new(5);
+        let mut app = App::new(Preferences::default(), logs);
+        app.hunk_index = 1;
+
+        clamp_hunk_index(&mut app, 3);
+
+        assert_eq!(app.hunk_index, 1);
+    }
+
+    #[test]
+    fn clamp_hunk_index_moves_to_last_remaining_hunk() {
+        let logs = LogBuffer::new(5);
+        let mut app = App::new(Preferences::default(), logs);
+        app.hunk_index = 3;
+
+        clamp_hunk_index(&mut app, 2);
+
+        assert_eq!(app.hunk_index, 1);
+    }
+
+    #[test]
+    fn clamp_hunk_index_resets_when_no_hunks_remain() {
+        let logs = LogBuffer::new(5);
+        let mut app = App::new(Preferences::default(), logs);
+        app.hunk_index = 3;
+
+        clamp_hunk_index(&mut app, 0);
+
+        assert_eq!(app.hunk_index, 0);
+    }
+
+    #[test]
+    fn accepted_hunk_message_reports_remaining_work() {
+        assert_eq!(accepted_hunk_message(0), "accepted hunk, file caught up");
+        assert_eq!(accepted_hunk_message(1), "accepted hunk, 1 left");
+        assert_eq!(accepted_hunk_message(2), "accepted hunk, 2 left");
     }
 }
