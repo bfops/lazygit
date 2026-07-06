@@ -22,11 +22,13 @@ use crate::prefs::{DiffViewMode, Preferences};
 use crate::state::{ReviewFile, ReviewSession};
 
 type Term = Terminal<CrosstermBackend<Stdout>>;
+const DIFF_VERTICAL_SCROLL_STEP: u16 = 3;
 
 #[derive(Debug)]
 struct App {
     file_index: usize,
     hunk_index: usize,
+    diff_vertical_offset: u16,
     message: String,
     prefs: Preferences,
     logs: LogBuffer,
@@ -39,6 +41,7 @@ impl App {
         Self {
             file_index: 0,
             hunk_index: 0,
+            diff_vertical_offset: 0,
             message: String::new(),
             prefs,
             logs,
@@ -103,28 +106,42 @@ fn handle_key(
 ) -> Result<bool> {
     match key.code {
         KeyCode::Char('q') => return Ok(true),
-        KeyCode::Down | KeyCode::Char('j') => {
+        KeyCode::Down => {
             if app.file_index + 1 < session.files.len() {
                 app.file_index += 1;
                 app.hunk_index = 0;
+                reset_diff_scroll(app);
             }
         }
-        KeyCode::Up | KeyCode::Char('k') => {
+        KeyCode::Up => {
             if app.file_index > 0 {
                 app.file_index -= 1;
                 app.hunk_index = 0;
+                reset_diff_scroll(app);
             }
         }
-        KeyCode::Char('n') => {
+        KeyCode::Char(']') | KeyCode::Char('n') => {
             let count = current_hunks(session, app).len();
             if app.hunk_index + 1 < count {
                 app.hunk_index += 1;
+                reset_diff_scroll(app);
             }
         }
-        KeyCode::Char('p') => {
+        KeyCode::Char('[') | KeyCode::Char('p') => {
             if app.hunk_index > 0 {
                 app.hunk_index -= 1;
+                reset_diff_scroll(app);
             }
+        }
+        KeyCode::Char('j') | KeyCode::Char('d') | KeyCode::PageDown => {
+            scroll_diff_down(app);
+        }
+        KeyCode::Char('k') | KeyCode::Char('u') | KeyCode::PageUp => {
+            scroll_diff_up(app);
+        }
+        KeyCode::Home => reset_diff_scroll(app),
+        KeyCode::End => {
+            app.diff_vertical_offset = u16::MAX;
         }
         KeyCode::Char('a') => accept_selected_hunk(session, worker, app)?,
         KeyCode::Char('A') => accept_all_hunks(session, worker, app)?,
@@ -150,6 +167,8 @@ fn handle_key(
                 app.prefs.diff_horizontal_offset =
                     app.prefs.diff_horizontal_offset.saturating_add(4);
                 app.prefs.save()?;
+            } else {
+                scroll_diff_down(app);
             }
         }
         KeyCode::Left | KeyCode::Char('h') => {
@@ -157,6 +176,8 @@ fn handle_key(
                 app.prefs.diff_horizontal_offset =
                     app.prefs.diff_horizontal_offset.saturating_sub(4);
                 app.prefs.save()?;
+            } else {
+                scroll_diff_up(app);
             }
         }
         _ => {}
@@ -183,6 +204,7 @@ fn accept_selected_hunk(
     let outcome = session.accept_file_content_local(app.file_index, next)?;
     let remaining = current_hunks(session, app).len();
     clamp_hunk_index(app, remaining);
+    reset_diff_scroll(app);
     app.message = accepted_hunk_message(remaining);
     app.logs.record(format!(
         "accepted hunk in {}",
@@ -199,6 +221,7 @@ fn accept_all_hunks(session: &mut ReviewSession, worker: &JobWorker, app: &mut A
     let current = session.files[app.file_index].current.clone();
     let outcome = session.accept_file_content_local(app.file_index, current)?;
     app.hunk_index = 0;
+    reset_diff_scroll(app);
     app.message = "accepted file".into();
     app.logs.record(format!(
         "accepted file {}",
@@ -231,6 +254,7 @@ fn drain_job_events(session: &mut ReviewSession, worker: &JobWorker, app: &mut A
                 session.apply_refreshed_files(files)?;
                 app.refresh_pending = false;
                 app.hunk_index = 0;
+                reset_diff_scroll(app);
                 app.message = "refresh complete".into();
                 app.logs.record("refresh complete");
             }
@@ -280,7 +304,12 @@ fn draw(frame: &mut ratatui::Frame, session: &ReviewSession, app: &App) {
             } else {
                 Style::default()
             };
-            ListItem::new(format!("{prefix} {}{}", file.meta.path, hunk_label)).style(style)
+            ListItem::new(format!(
+                "{prefix} {}{}",
+                file_list_path_label(file),
+                hunk_label
+            ))
+            .style(style)
         })
         .collect();
     let file_list = List::new(files).block(Block::default().title("Files").borders(Borders::ALL));
@@ -295,11 +324,16 @@ fn draw(frame: &mut ratatui::Frame, session: &ReviewSession, app: &App) {
         ])
         .split(chunks[1]);
     let diff = diff_lines(session, app);
-    let mut diff_paragraph = Paragraph::new(diff).block(
-        Block::default()
-            .title("Reviewed -> Current")
-            .borders(Borders::ALL),
-    );
+    let mut diff_paragraph = Paragraph::new(diff)
+        .block(
+            Block::default()
+                .title(format!(
+                    "Reviewed -> Current y={}",
+                    app.diff_vertical_offset
+                ))
+                .borders(Borders::ALL),
+        )
+        .scroll((app.diff_vertical_offset, 0));
     if app.prefs.diff_view_mode == DiffViewMode::Wrap {
         diff_paragraph = diff_paragraph.wrap(Wrap { trim: false });
     }
@@ -309,7 +343,7 @@ fn draw(frame: &mut ratatui::Frame, session: &ReviewSession, app: &App) {
         right[1],
     );
     let help = format!(
-        "j/k move  n/p hunk  a accept  A accept file  w wrap/scroll  h/l scroll  r refresh  q quit  {}  {}  {}",
+        "Up/Down file  [/]/n/p hunk  hjkl diff scroll  a accept  A accept file  w wrap/scroll  r refresh  q quit  {}  {}  {}",
         mode_label(&app.prefs),
         job_label(app),
         app.message
@@ -339,33 +373,21 @@ fn diff_lines(session: &ReviewSession, app: &App) -> Vec<Line<'static>> {
     }
     let mut lines = Vec::new();
     let total = h.len();
-    for (hunk_idx, hunk) in h.iter().enumerate() {
-        let header_style = if hunk_idx == app.hunk_index {
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-        lines.push(Line::from(Span::styled(
-            format!("@@ hunk {}/{} @@", hunk_idx + 1, total),
-            header_style,
-        )));
-        for line in &hunk.lines {
-            match line {
-                DiffLine::Equal(text) => lines.push(diff_line(
-                    format!(" {}", text.trim_end_matches('\n')),
-                    Style::default(),
-                    app,
-                )),
-                DiffLine::Delete(text) => lines.push(Line::from(Span::styled(
-                    scroll_text(&format!("-{}", text.trim_end_matches('\n')), app),
-                    Style::default().fg(Color::Red),
-                ))),
-                DiffLine::Insert(text) => lines.push(Line::from(Span::styled(
-                    scroll_text(&format!("+{}", text.trim_end_matches('\n')), app),
-                    Style::default().fg(Color::Green),
-                ))),
+    let index = app.hunk_index.min(total - 1);
+    lines.push(Line::from(Span::styled(
+        remaining_hunks_label(total),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    )));
+    for line in &h[index].lines {
+        match line {
+            DiffLine::Equal(text) => lines.push(diff_line(" ", text, Style::default(), app)),
+            DiffLine::Delete(text) => {
+                lines.push(diff_line("-", text, Style::default().fg(Color::Red), app))
+            }
+            DiffLine::Insert(text) => {
+                lines.push(diff_line("+", text, Style::default().fg(Color::Green), app))
             }
         }
     }
@@ -376,11 +398,27 @@ fn remaining_hunk_count(file: &ReviewFile) -> usize {
     hunks(&file.reviewed, &file.current).len()
 }
 
+fn file_list_path_label(file: &ReviewFile) -> String {
+    if let Some(previous_path) = &file.meta.previous_path {
+        if previous_path != &file.meta.path {
+            return format!("{previous_path} -> {}", file.meta.path);
+        }
+    }
+    file.meta.path.clone()
+}
+
 fn hunk_count_label(count: usize) -> String {
     match count {
         0 => String::new(),
         1 => " (1 hunk)".into(),
         count => format!(" ({count} hunks)"),
+    }
+}
+
+fn remaining_hunks_label(count: usize) -> String {
+    match count {
+        1 => "1 hunk remaining".into(),
+        count => format!("{count} hunks remaining"),
     }
 }
 
@@ -392,6 +430,22 @@ fn clamp_hunk_index(app: &mut App, remaining_count: usize) {
     }
 }
 
+fn reset_diff_scroll(app: &mut App) {
+    app.diff_vertical_offset = 0;
+}
+
+fn scroll_diff_down(app: &mut App) {
+    app.diff_vertical_offset = app
+        .diff_vertical_offset
+        .saturating_add(DIFF_VERTICAL_SCROLL_STEP);
+}
+
+fn scroll_diff_up(app: &mut App) {
+    app.diff_vertical_offset = app
+        .diff_vertical_offset
+        .saturating_sub(DIFF_VERTICAL_SCROLL_STEP);
+}
+
 fn accepted_hunk_message(remaining_count: usize) -> String {
     match remaining_count {
         0 => "accepted hunk, file caught up".into(),
@@ -400,8 +454,13 @@ fn accepted_hunk_message(remaining_count: usize) -> String {
     }
 }
 
-fn diff_line(text: String, style: Style, app: &App) -> Line<'static> {
+fn diff_line(prefix: &str, text: &str, style: Style, app: &App) -> Line<'static> {
+    let text = format!("{prefix}{}", display_line_text(text));
     Line::from(Span::styled(scroll_text(&text, app), style))
+}
+
+fn display_line_text(text: &str) -> &str {
+    text.trim_end_matches(['\r', '\n'])
 }
 
 fn scroll_text(text: &str, app: &App) -> String {
@@ -450,6 +509,27 @@ mod tests {
     }
 
     #[test]
+    fn display_line_text_strips_line_endings_only() {
+        assert_eq!(display_line_text("abc\n"), "abc");
+        assert_eq!(display_line_text("abc\r\n"), "abc");
+        assert_eq!(display_line_text("abc"), "abc");
+        assert_eq!(display_line_text("\n"), "");
+        assert_eq!(display_line_text("abc  \n"), "abc  ");
+    }
+
+    #[test]
+    fn diff_line_has_no_embedded_line_terminators() {
+        let logs = LogBuffer::new(5);
+        let app = App::new(Preferences::default(), logs);
+        let line = diff_line("+", "abc\r\n", Style::default(), &app);
+
+        let rendered = line.spans[0].content.as_ref();
+        assert_eq!(rendered, "+abc");
+        assert!(!rendered.contains('\n'));
+        assert!(!rendered.contains('\r'));
+    }
+
+    #[test]
     fn mode_label_reports_scroll_offset() {
         let prefs = Preferences {
             diff_view_mode: DiffViewMode::Scroll,
@@ -474,6 +554,12 @@ mod tests {
         assert_eq!(hunk_count_label(0), "");
         assert_eq!(hunk_count_label(1), " (1 hunk)");
         assert_eq!(hunk_count_label(2), " (2 hunks)");
+    }
+
+    #[test]
+    fn remaining_hunks_label_formats_counts() {
+        assert_eq!(remaining_hunks_label(1), "1 hunk remaining");
+        assert_eq!(remaining_hunks_label(2), "2 hunks remaining");
     }
 
     #[test]
@@ -514,5 +600,57 @@ mod tests {
         assert_eq!(accepted_hunk_message(0), "accepted hunk, file caught up");
         assert_eq!(accepted_hunk_message(1), "accepted hunk, 1 left");
         assert_eq!(accepted_hunk_message(2), "accepted hunk, 2 left");
+    }
+
+    #[test]
+    fn file_list_label_formats_renamed_files() {
+        let file = ReviewFile {
+            meta: crate::state::FileState {
+                path: "new/path.rs".into(),
+                previous_path: Some("old/path.rs".into()),
+                change_type: "RENAMED".into(),
+                reviewed_hash: String::new(),
+                current_hash: None,
+                base_path_used: Some("old/path.rs".into()),
+                base_ref_oid_used: Some("base".into()),
+                initial_reviewed_hash: Some(String::new()),
+                unsupported: false,
+            },
+            reviewed: String::new(),
+            current: String::new(),
+        };
+
+        assert_eq!(file_list_path_label(&file), "old/path.rs -> new/path.rs");
+    }
+
+    #[test]
+    fn scroll_diff_down_increases_vertical_offset() {
+        let logs = LogBuffer::new(5);
+        let mut app = App::new(Preferences::default(), logs);
+
+        scroll_diff_down(&mut app);
+
+        assert_eq!(app.diff_vertical_offset, DIFF_VERTICAL_SCROLL_STEP);
+    }
+
+    #[test]
+    fn scroll_diff_up_saturates_at_zero() {
+        let logs = LogBuffer::new(5);
+        let mut app = App::new(Preferences::default(), logs);
+
+        scroll_diff_up(&mut app);
+
+        assert_eq!(app.diff_vertical_offset, 0);
+    }
+
+    #[test]
+    fn reset_diff_scroll_clears_vertical_offset() {
+        let logs = LogBuffer::new(5);
+        let mut app = App::new(Preferences::default(), logs);
+        app.diff_vertical_offset = 42;
+
+        reset_diff_scroll(&mut app);
+
+        assert_eq!(app.diff_vertical_offset, 0);
     }
 }

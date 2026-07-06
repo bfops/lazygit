@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::process::Command;
 
 #[cfg(test)]
@@ -51,7 +52,32 @@ impl Gh {
             cmd.arg(pr);
         }
         let output = run_json(cmd)?;
-        serde_json::from_str(&output).context("failed to parse gh pr view JSON")
+        let mut meta: PrMeta =
+            serde_json::from_str(&output).context("failed to parse gh pr view JSON")?;
+        self.enrich_renamed_files(pr, &mut meta)?;
+        Ok(meta)
+    }
+
+    fn enrich_renamed_files(&self, pr: Option<&str>, meta: &mut PrMeta) -> Result<()> {
+        let needs_patch = meta
+            .files
+            .iter()
+            .any(|file| is_renamed(file) && file.previous_path.is_none());
+        if !needs_patch {
+            return Ok(());
+        }
+
+        let patch = self.pr_diff_patch(pr)?;
+        let renames = parse_rename_paths(&patch);
+        enrich_renamed_files_from_map(meta, &renames)
+    }
+
+    pub fn pr_diff_patch(&self, pr: Option<&str>) -> Result<String> {
+        let mut cmd = self.pr_diff_cmd();
+        if let Some(pr) = pr {
+            cmd.arg(pr);
+        }
+        run_json(cmd)
     }
 
     pub fn file_at_ref(&self, repo: &str, oid: &str, path: &str) -> Result<Option<String>> {
@@ -117,6 +143,15 @@ mutation($pullRequestId: ID!, $path: String!) {
         cmd
     }
 
+    fn pr_diff_cmd(&self) -> Command {
+        let mut cmd = Command::new("gh");
+        cmd.args(["pr", "diff", "--patch"]);
+        if let Some(repo) = &self.repo {
+            cmd.args(["-R", repo]);
+        }
+        cmd
+    }
+
     fn api_cmd(&self, hostname: Option<&str>) -> Command {
         let mut cmd = Command::new("gh");
         cmd.args(["api", "graphql"]);
@@ -125,6 +160,47 @@ mutation($pullRequestId: ID!, $path: String!) {
         }
         cmd
     }
+}
+
+fn is_renamed(file: &PrFile) -> bool {
+    file.change_type.eq_ignore_ascii_case("RENAMED")
+        || file.change_type.eq_ignore_ascii_case("MOVED")
+}
+
+pub fn parse_rename_paths(patch: &str) -> HashMap<String, String> {
+    let mut renames = HashMap::new();
+    let mut rename_from = None;
+
+    for line in patch.lines() {
+        if let Some(path) = line.strip_prefix("rename from ") {
+            rename_from = Some(path.to_owned());
+        } else if let Some(path) = line.strip_prefix("rename to ") {
+            if let Some(from) = rename_from.take() {
+                renames.insert(path.to_owned(), from);
+            }
+        } else if line.starts_with("diff --git ") {
+            rename_from = None;
+        }
+    }
+
+    renames
+}
+
+fn enrich_renamed_files_from_map(
+    meta: &mut PrMeta,
+    renames: &HashMap<String, String>,
+) -> Result<()> {
+    for file in &mut meta.files {
+        if is_renamed(file) && file.previous_path.is_none() {
+            file.previous_path = Some(renames.get(&file.path).cloned().ok_or_else(|| {
+                anyhow!(
+                    "renamed file {} is missing previousPath and no rename header was found in patch",
+                    file.path
+                )
+            })?);
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -226,5 +302,93 @@ mod tests {
             parts,
             vec!["gh", "api", "graphql", "--hostname", "github.example.com"]
         );
+    }
+
+    #[test]
+    fn pr_diff_command_includes_repo_flag() {
+        let gh = Gh::new(Some("clockworklabs/SpacetimeDBPrivate".into()));
+        let parts = command_parts(&gh.pr_diff_cmd());
+
+        assert_eq!(
+            parts,
+            vec![
+                "gh",
+                "pr",
+                "diff",
+                "--patch",
+                "-R",
+                "clockworklabs/SpacetimeDBPrivate"
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_rename_paths_from_patch() {
+        let patch = r#"
+diff --git a/tools/find-related-private-pr/Cargo.toml b/tools/find-related-pr/Cargo.toml
+similarity index 87%
+rename from tools/find-related-private-pr/Cargo.toml
+rename to tools/find-related-pr/Cargo.toml
+index 76de5fc46..d86272280 100644
+--- a/tools/find-related-private-pr/Cargo.toml
++++ b/tools/find-related-pr/Cargo.toml
+"#;
+
+        let renames = parse_rename_paths(patch);
+
+        assert_eq!(
+            renames.get("tools/find-related-pr/Cargo.toml"),
+            Some(&"tools/find-related-private-pr/Cargo.toml".into())
+        );
+    }
+
+    #[test]
+    fn enriches_missing_previous_path_for_renamed_files() {
+        let mut meta = PrMeta {
+            id: "PR_kw".into(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            base_ref_oid: "base".into(),
+            head_ref_oid: "head".into(),
+            head_repository: None,
+            files: vec![PrFile {
+                path: "new/path.rs".into(),
+                additions: 1,
+                deletions: 1,
+                change_type: "RENAMED".into(),
+                previous_path: None,
+            }],
+        };
+        let renames = HashMap::from([("new/path.rs".to_owned(), "old/path.rs".to_owned())]);
+
+        enrich_renamed_files_from_map(&mut meta, &renames).unwrap();
+
+        assert_eq!(meta.files[0].previous_path.as_deref(), Some("old/path.rs"));
+    }
+
+    #[test]
+    fn enrichment_errors_when_renamed_file_is_missing_from_patch_map() {
+        let mut meta = PrMeta {
+            id: "PR_kw".into(),
+            number: 1,
+            url: "https://github.com/acme/widgets/pull/1".into(),
+            base_ref_oid: "base".into(),
+            head_ref_oid: "head".into(),
+            head_repository: None,
+            files: vec![PrFile {
+                path: "new/path.rs".into(),
+                additions: 1,
+                deletions: 1,
+                change_type: "RENAMED".into(),
+                previous_path: None,
+            }],
+        };
+        let renames = HashMap::new();
+
+        let error = enrich_renamed_files_from_map(&mut meta, &renames).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("renamed file new/path.rs is missing previousPath"));
     }
 }
