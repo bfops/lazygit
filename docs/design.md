@@ -66,8 +66,24 @@ Keys:
 - `n/p`: next or previous hunk.
 - `a`: accept selected hunk.
 - `A`: accept all hunks in the current file.
+- `w`: toggle diff wrapping versus horizontal scrolling.
+- `h/l` or left/right arrows: adjust horizontal scroll offset in scroll mode.
 - `r`: refresh from GitHub.
 - `q`: quit.
+
+The TUI includes a log pane showing recent startup, refresh, and review actions.
+Startup progress is also written to stderr before entering the alternate-screen
+TUI so slow GitHub fetches are visible.
+
+After the initial load, slow GitHub work runs on a background worker thread.
+Refreshing file contents and marking files viewed in GitHub are queued as jobs so
+the TUI keeps rendering and accepting navigation input while those requests are
+pending. Local reviewed-state writes still happen synchronously before the UI
+reports a hunk or file accepted.
+
+Global user preferences are stored in the platform config directory as
+`prefs.json`. The initial preferences are diff wrapping enabled and horizontal
+scroll offset `0`.
 
 ## V1 Non-Goals
 

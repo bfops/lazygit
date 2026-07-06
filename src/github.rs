@@ -1,5 +1,8 @@
 use std::process::Command;
 
+#[cfg(test)]
+use std::ffi::OsString;
+
 use anyhow::{anyhow, Context, Result};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -43,13 +46,7 @@ impl Gh {
     }
 
     pub fn pr_view(&self, pr: Option<&str>) -> Result<PrMeta> {
-        let mut cmd = self.base_cmd();
-        cmd.args([
-            "pr",
-            "view",
-            "--json",
-            "id,number,url,baseRefOid,headRefOid,files,headRepository",
-        ]);
+        let mut cmd = self.pr_cmd();
         if let Some(pr) = pr {
             cmd.arg(pr);
         }
@@ -58,14 +55,7 @@ impl Gh {
     }
 
     pub fn file_at_ref(&self, repo: &str, oid: &str, path: &str) -> Result<Option<String>> {
-        let repo_parts: Vec<&str> = repo.split('/').collect();
-        let repo_name = match repo_parts.as_slice() {
-            [owner, name] => Some((*owner, *name)),
-            [_host, owner, name] => Some((*owner, *name)),
-            _ => None,
-        };
-        let (owner, name) =
-            repo_name.ok_or_else(|| anyhow!("repo must be OWNER/REPO or HOST/OWNER/REPO"))?;
+        let repo = ParsedRepo::parse(repo)?;
         let expr = format!("{oid}:{path}");
         let real_query = r#"
 query($owner: String!, $name: String!, $expr: String!) {
@@ -80,11 +70,10 @@ query($owner: String!, $name: String!, $expr: String!) {
   }
 }
 "#;
-        let mut cmd = self.base_cmd();
-        cmd.args(["api", "graphql"]);
+        let mut cmd = self.api_cmd(repo.host);
         cmd.args(["-f", &format!("query={real_query}")]);
-        cmd.args(["-F", &format!("owner={owner}")]);
-        cmd.args(["-F", &format!("name={name}")]);
+        cmd.args(["-F", &format!("owner={}", repo.owner)]);
+        cmd.args(["-F", &format!("name={}", repo.name)]);
         cmd.args(["-F", &format!("expr={expr}")]);
         let output = run_json(cmd)?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
@@ -106,8 +95,7 @@ mutation($pullRequestId: ID!, $path: String!) {
   }
 }
 "#;
-        let mut cmd = self.base_cmd();
-        cmd.args(["api", "graphql"]);
+        let mut cmd = self.api_cmd(None);
         cmd.args(["-f", &format!("query={query}")]);
         cmd.args(["-F", &format!("pullRequestId={pull_request_id}")]);
         cmd.args(["-F", &format!("path={path}")]);
@@ -115,13 +103,62 @@ mutation($pullRequestId: ID!, $path: String!) {
         Ok(())
     }
 
-    fn base_cmd(&self) -> Command {
+    fn pr_cmd(&self) -> Command {
         let mut cmd = Command::new("gh");
+        cmd.args([
+            "pr",
+            "view",
+            "--json",
+            "id,number,url,baseRefOid,headRefOid,files,headRepository",
+        ]);
         if let Some(repo) = &self.repo {
             cmd.args(["-R", repo]);
         }
         cmd
     }
+
+    fn api_cmd(&self, hostname: Option<&str>) -> Command {
+        let mut cmd = Command::new("gh");
+        cmd.args(["api", "graphql"]);
+        if let Some(hostname) = hostname {
+            cmd.args(["--hostname", hostname]);
+        }
+        cmd
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ParsedRepo<'a> {
+    host: Option<&'a str>,
+    owner: &'a str,
+    name: &'a str,
+}
+
+impl<'a> ParsedRepo<'a> {
+    fn parse(repo: &'a str) -> Result<Self> {
+        let parts: Vec<&str> = repo.split('/').collect();
+        match parts.as_slice() {
+            [owner, name] => Ok(Self {
+                host: None,
+                owner,
+                name,
+            }),
+            [host, owner, name] => Ok(Self {
+                host: Some(host),
+                owner,
+                name,
+            }),
+            _ => Err(anyhow!("repo must be OWNER/REPO or HOST/OWNER/REPO")),
+        }
+    }
+}
+
+#[cfg(test)]
+fn command_parts(cmd: &Command) -> Vec<String> {
+    std::iter::once(cmd.get_program().to_os_string())
+        .chain(cmd.get_args().map(OsString::from))
+        .map(|part| part.to_string_lossy().into_owned())
+        .collect()
 }
 
 fn run_json(mut cmd: Command) -> Result<String> {
@@ -143,4 +180,51 @@ pub fn hash_content(content: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pr_command_includes_repo_flag() {
+        let gh = Gh::new(Some("clockworklabs/SpacetimeDBPrivate".into()));
+        let parts = command_parts(&gh.pr_cmd());
+
+        assert!(parts.contains(&"-R".into()));
+        assert!(parts.contains(&"clockworklabs/SpacetimeDBPrivate".into()));
+    }
+
+    #[test]
+    fn api_command_does_not_include_repo_flag() {
+        let gh = Gh::new(Some("clockworklabs/SpacetimeDBPrivate".into()));
+        let parts = command_parts(&gh.api_cmd(None));
+
+        assert_eq!(parts, vec!["gh", "api", "graphql"]);
+    }
+
+    #[test]
+    fn parses_owner_repo() {
+        assert_eq!(
+            ParsedRepo::parse("clockworklabs/SpacetimeDBPrivate").unwrap(),
+            ParsedRepo {
+                host: None,
+                owner: "clockworklabs",
+                name: "SpacetimeDBPrivate"
+            }
+        );
+    }
+
+    #[test]
+    fn api_command_uses_hostname_for_enterprise_repo() {
+        let gh = Gh::new(None);
+        let repo =
+            ParsedRepo::parse("github.example.com/clockworklabs/SpacetimeDBPrivate").unwrap();
+        let parts = command_parts(&gh.api_cmd(repo.host));
+
+        assert_eq!(
+            parts,
+            vec!["gh", "api", "graphql", "--hostname", "github.example.com"]
+        );
+    }
 }
