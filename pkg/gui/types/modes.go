@@ -5,6 +5,7 @@ import (
 	"github.com/jesseduffield/lazygit/pkg/gui/modes/diffing"
 	"github.com/jesseduffield/lazygit/pkg/gui/modes/filtering"
 	"github.com/jesseduffield/lazygit/pkg/gui/modes/marked_base_commit"
+	reviewmode "github.com/jesseduffield/lazygit/pkg/gui/modes/review"
 )
 
 type Modes struct {
@@ -12,4 +13,5 @@ type Modes struct {
 	CherryPicking    *cherrypicking.CherryPicking
 	Diffing          diffing.Diffing
 	MarkedBaseCommit marked_base_commit.MarkedBaseCommit
+	Review           reviewmode.Review
 }

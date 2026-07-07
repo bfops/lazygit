@@ -8,6 +8,7 @@ import (
 	"github.com/jesseduffield/lazygit/pkg/common"
 	"github.com/jesseduffield/lazygit/pkg/config"
 	"github.com/jesseduffield/lazygit/pkg/gocui"
+	"github.com/jesseduffield/lazygit/pkg/review"
 	"github.com/jesseduffield/lazygit/pkg/tasks"
 	"github.com/jesseduffield/lazygit/pkg/utils"
 	"github.com/sasha-s/go-deadlock"
@@ -308,6 +309,8 @@ type Model struct {
 	Worktrees       []*models.Worktree
 	PullRequests    []*models.GithubPullRequest
 	PullRequestsMap map[string]*models.GithubPullRequest
+	ReviewSession   *review.Session
+	ReviewLogs      []string
 
 	// FilteredReflogCommits are the ones that appear in the reflog panel.
 	// When in filtering mode we only include the ones that match the given path

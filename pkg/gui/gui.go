@@ -30,6 +30,7 @@ import (
 	"github.com/jesseduffield/lazygit/pkg/gui/modes/diffing"
 	"github.com/jesseduffield/lazygit/pkg/gui/modes/filtering"
 	"github.com/jesseduffield/lazygit/pkg/gui/modes/marked_base_commit"
+	reviewmode "github.com/jesseduffield/lazygit/pkg/gui/modes/review"
 	"github.com/jesseduffield/lazygit/pkg/gui/popup"
 	"github.com/jesseduffield/lazygit/pkg/gui/presentation"
 	"github.com/jesseduffield/lazygit/pkg/gui/presentation/authors"
@@ -637,6 +638,7 @@ func (gui *Gui) resetState(startArgs appTypes.StartArgs) types.Context {
 			CherryPicking:    cherrypicking.New(),
 			Diffing:          diffing.New(),
 			MarkedBaseCommit: marked_base_commit.New(),
+			Review:           reviewmode.New(reviewmode.DiffViewMode(gui.c.GetAppState().Review.DiffViewMode), gui.c.GetAppState().Review.DiffHorizontalOffset),
 		},
 		ScreenMode: initialScreenMode,
 		// TODO: only use contexts from context manager

@@ -6,6 +6,7 @@ type Views struct {
 	Status         *gocui.View
 	Submodules     *gocui.View
 	Files          *gocui.View
+	Review         *gocui.View
 	Branches       *gocui.View
 	Remotes        *gocui.View
 	Worktrees      *gocui.View

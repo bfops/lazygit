@@ -21,30 +21,34 @@ func contentHeights(heights map[string]int) func(window string) int {
 	}
 }
 
+func defaultWindowArrangementArgs() WindowArrangementArgs {
+	return WindowArrangementArgs{
+		Width:             75,
+		Height:            30,
+		UserConfig:        config.GetDefaultConfig(),
+		CurrentWindow:     "files",
+		CurrentSideWindow: "files",
+		ActiveViewForWindow: func(window string) string {
+			return window
+		},
+		SplitMainPanel:   false,
+		ScreenMode:       types.SCREEN_NORMAL,
+		AppStatus:        "",
+		InformationStr:   "information",
+		ShowExtrasWindow: false,
+		InDemo:           false,
+		IsAnyModeActive:  false,
+		InSearchPrompt:   false,
+		SearchPrefix:     "",
+	}
+}
+
 // The best way to add test cases here is to set your args and then get the
 // test to fail and copy+paste the output into the test case's expected string.
 // TODO: add more test cases
 func TestGetWindowDimensions(t *testing.T) {
 	getDefaultArgs := func() WindowArrangementArgs {
-		return WindowArrangementArgs{
-			Width:             75,
-			Height:            30,
-			UserConfig:        config.GetDefaultConfig(),
-			CurrentWindow:     "files",
-			CurrentSideWindow: "files",
-			// Each panel shows its first tab by default; for the special-cased
-			// panels (status, stash) the view name matches the window name.
-			ActiveViewForWindow: func(window string) string { return window },
-			SplitMainPanel:      false,
-			ScreenMode:          types.SCREEN_NORMAL,
-			AppStatus:           "",
-			InformationStr:      "information",
-			ShowExtrasWindow:    false,
-			InDemo:              false,
-			IsAnyModeActive:     false,
-			InSearchPrompt:      false,
-			SearchPrefix:        "",
-		}
+		return defaultWindowArrangementArgs()
 	}
 
 	type Test struct {

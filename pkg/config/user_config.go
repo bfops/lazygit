@@ -554,6 +554,7 @@ type KeybindingUniversalConfig struct {
 	DecreaseRenameSimilarityThreshold Keybinding `yaml:"decreaseRenameSimilarityThreshold"`
 	OpenDiffTool                      Keybinding `yaml:"openDiffTool"`
 	EditConfig                        Keybinding `yaml:"editConfig"`
+	ToggleReviewMode                  Keybinding `yaml:"toggleReviewMode"`
 }
 
 type KeybindingStatusConfig struct {
@@ -864,7 +865,7 @@ func GetDefaultConfigForPlatform(platform string) *UserConfig {
 			ShrinkSidePanelsToContent: false,
 			SidePanels: []SidePanel{
 				{"status"},
-				{"files", "worktrees", "submodules"},
+				{"files", "worktrees", "submodules", "review"},
 				{"branches", "remotes", "tags"},
 				{"commits", "reflog"},
 				{"stash"},
@@ -1072,6 +1073,7 @@ func GetDefaultConfigForPlatform(platform string) *UserConfig {
 				DecreaseRenameSimilarityThreshold: Keybinding{"("},
 				OpenDiffTool:                      Keybinding{"<ctrl+t>"},
 				EditConfig:                        Keybinding{"<alt+shift+c>"},
+				ToggleReviewMode:                  Keybinding{"<alt+r>"},
 			},
 			Status: KeybindingStatusConfig{
 				CheckForUpdate:             Keybinding{"u"},

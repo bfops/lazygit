@@ -3,6 +3,7 @@ package controllers
 import (
 	"strconv"
 
+	"github.com/jesseduffield/lazygit/pkg/config"
 	"github.com/jesseduffield/lazygit/pkg/gui/context"
 	"github.com/jesseduffield/lazygit/pkg/gui/types"
 	"github.com/jesseduffield/lazygit/pkg/utils"
@@ -142,6 +143,130 @@ func (self *GlobalController) GetKeybindings(opts types.KeybindingsOpts) []*type
 			Description: self.c.Tr.EditConfig,
 			Tooltip:     self.c.Tr.EditFileTooltip,
 		},
+		{
+			Keys:        opts.GetKeys(opts.Config.Universal.ToggleReviewMode),
+			Handler:     opts.Guards.NoPopupPanel(self.toggleReviewMode),
+			Description: "Toggle PR review mode",
+		},
+		{
+			ViewName:          "main",
+			Keys:              opts.GetKeys(config.Keybinding{"n", "]"}),
+			Handler:           self.reviewNextHunk,
+			Description:       "Next review hunk",
+			GetDisabledReason: self.reviewModeOnly,
+		},
+		{
+			ViewName:          "main",
+			Keys:              opts.GetKeys(config.Keybinding{"p", "["}),
+			Handler:           self.reviewPrevHunk,
+			Description:       "Previous review hunk",
+			GetDisabledReason: self.reviewModeOnly,
+		},
+		{
+			ViewName:          "review",
+			Keys:              opts.GetKeys(opts.Config.Universal.NextItem),
+			Handler:           self.reviewNextFile,
+			Description:       "Next review file",
+			GetDisabledReason: self.reviewModeOnly,
+		},
+		{
+			ViewName:          "review",
+			Keys:              opts.GetKeys(opts.Config.Universal.NextItemAlt),
+			Handler:           self.reviewNextFile,
+			Description:       "Next review file",
+			GetDisabledReason: self.reviewModeOnly,
+		},
+		{
+			ViewName:          "review",
+			Keys:              opts.GetKeys(opts.Config.Universal.PrevItem),
+			Handler:           self.reviewPrevFile,
+			Description:       "Previous review file",
+			GetDisabledReason: self.reviewModeOnly,
+		},
+		{
+			ViewName:          "review",
+			Keys:              opts.GetKeys(opts.Config.Universal.PrevItemAlt),
+			Handler:           self.reviewPrevFile,
+			Description:       "Previous review file",
+			GetDisabledReason: self.reviewModeOnly,
+		},
+		{
+			ViewName:          "review",
+			Keys:              opts.GetKeys(config.Keybinding{"J"}),
+			Handler:           self.reviewNextFile,
+			Description:       "Next review file",
+			GetDisabledReason: self.reviewModeOnly,
+		},
+		{
+			ViewName:          "review",
+			Keys:              opts.GetKeys(config.Keybinding{"K"}),
+			Handler:           self.reviewPrevFile,
+			Description:       "Previous review file",
+			GetDisabledReason: self.reviewModeOnly,
+		},
+		{
+			ViewName:          "main",
+			Keys:              opts.GetKeys(config.Keybinding{"J"}),
+			Handler:           self.reviewNextFile,
+			Description:       "Next review file",
+			GetDisabledReason: self.reviewModeOnly,
+		},
+		{
+			ViewName:          "main",
+			Keys:              opts.GetKeys(config.Keybinding{"K"}),
+			Handler:           self.reviewPrevFile,
+			Description:       "Previous review file",
+			GetDisabledReason: self.reviewModeOnly,
+		},
+		{
+			ViewName:          "main",
+			Keys:              opts.GetKeys(config.Keybinding{"a"}),
+			Handler:           self.reviewAcceptHunk,
+			Description:       "Accept review hunk",
+			GetDisabledReason: self.reviewModeOnly,
+		},
+		{
+			ViewName:          "main",
+			Keys:              opts.GetKeys(config.Keybinding{"A"}),
+			Handler:           self.reviewAcceptFile,
+			Description:       "Accept review file",
+			GetDisabledReason: self.reviewModeOnly,
+		},
+		{
+			ViewName:          "main",
+			Keys:              opts.GetKeys(config.Keybinding{"w"}),
+			Handler:           self.reviewToggleWrap,
+			Description:       "Toggle review diff wrap",
+			GetDisabledReason: self.reviewModeOnly,
+		},
+		{
+			ViewName:          "main",
+			Keys:              opts.GetKeys(config.Keybinding{"j"}),
+			Handler:           self.reviewScrollDown,
+			Description:       "Scroll review diff down",
+			GetDisabledReason: self.reviewModeOnly,
+		},
+		{
+			ViewName:          "main",
+			Keys:              opts.GetKeys(config.Keybinding{"k"}),
+			Handler:           self.reviewScrollUp,
+			Description:       "Scroll review diff up",
+			GetDisabledReason: self.reviewModeOnly,
+		},
+		{
+			ViewName:          "main",
+			Keys:              opts.GetKeys(config.Keybinding{"h"}),
+			Handler:           self.reviewScrollLeft,
+			Description:       "Scroll review diff left",
+			GetDisabledReason: self.reviewModeOnly,
+		},
+		{
+			ViewName:          "main",
+			Keys:              opts.GetKeys(config.Keybinding{"l"}),
+			Handler:           self.reviewScrollRight,
+			Description:       "Scroll review diff right",
+			GetDisabledReason: self.reviewModeOnly,
+		},
 	}
 }
 
@@ -158,6 +283,9 @@ func (self *GlobalController) createCustomPatchOptionsMenu() error {
 }
 
 func (self *GlobalController) refresh() error {
+	if self.c.Modes().Review.Active {
+		return self.refreshReview()
+	}
 	self.c.Refresh(types.RefreshOptions{Mode: types.ASYNC})
 	return nil
 }

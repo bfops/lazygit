@@ -331,7 +331,7 @@ func TestUserConfigValidate_sidePanels(t *testing.T) {
 		panels []SidePanel
 		valid  bool
 	}{
-		{name: "default layout", panels: []SidePanel{{"status"}, {"files", "worktrees", "submodules"}, {"branches", "remotes", "tags"}, {"commits", "reflog"}, {"stash"}}, valid: true},
+		{name: "default layout", panels: []SidePanel{{"status"}, {"files", "worktrees", "submodules", "review"}, {"branches", "remotes", "tags"}, {"commits", "reflog"}, {"stash"}}, valid: true},
 		{name: "reordered", panels: []SidePanel{{"status"}, {"files"}, {"commits"}, {"branches"}, {"stash"}}, valid: true},
 		{name: "hidden stash panel", panels: []SidePanel{{"status"}, {"files"}, {"branches"}, {"commits"}}, valid: true},
 		{name: "promoted tab", panels: []SidePanel{{"files", "submodules"}, {"worktrees"}, {"branches"}, {"commits"}}, valid: true},

@@ -746,6 +746,13 @@ type AppState struct {
 	// Cache of GitHub pull requests per repo path, so that PR info can be
 	// shown instantly on startup before the async refresh completes.
 	GithubPullRequests map[string][]CachedPullRequest `yaml:"githubPullRequests"`
+
+	Review ReviewAppState `yaml:"review"`
+}
+
+type ReviewAppState struct {
+	DiffViewMode         string `yaml:"diffViewMode"`
+	DiffHorizontalOffset int    `yaml:"diffHorizontalOffset"`
 }
 
 // CachedPullRequest stores the essential fields of a GitHub pull request
@@ -762,6 +769,9 @@ type CachedPullRequest struct {
 func getDefaultAppState() *AppState {
 	return &AppState{
 		GithubPullRequests: make(map[string][]CachedPullRequest),
+		Review: ReviewAppState{
+			DiffViewMode: "wrap",
+		},
 	}
 }
 
