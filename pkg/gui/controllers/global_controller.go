@@ -147,12 +147,14 @@ func (self *GlobalController) GetKeybindings(opts types.KeybindingsOpts) []*type
 			Keys:        opts.GetKeys(opts.Config.Universal.ToggleReviewMode),
 			Handler:     opts.Guards.NoPopupPanel(self.toggleReviewMode),
 			Description: "Toggle PR review mode",
+			Tag:         "review",
 		},
 		{
 			ViewName:          "main",
 			Keys:              opts.GetKeys(config.Keybinding{"n", "]"}),
 			Handler:           self.reviewNextHunk,
 			Description:       "Next review hunk",
+			Tag:               "review",
 			GetDisabledReason: self.reviewModeOnly,
 		},
 		{
@@ -160,6 +162,7 @@ func (self *GlobalController) GetKeybindings(opts types.KeybindingsOpts) []*type
 			Keys:              opts.GetKeys(config.Keybinding{"p", "["}),
 			Handler:           self.reviewPrevHunk,
 			Description:       "Previous review hunk",
+			Tag:               "review",
 			GetDisabledReason: self.reviewModeOnly,
 		},
 		{
@@ -167,6 +170,7 @@ func (self *GlobalController) GetKeybindings(opts types.KeybindingsOpts) []*type
 			Keys:              opts.GetKeys(opts.Config.Universal.NextItem),
 			Handler:           self.reviewNextFile,
 			Description:       "Next review file",
+			Tag:               "review",
 			GetDisabledReason: self.reviewModeOnly,
 		},
 		{
@@ -174,6 +178,7 @@ func (self *GlobalController) GetKeybindings(opts types.KeybindingsOpts) []*type
 			Keys:              opts.GetKeys(opts.Config.Universal.NextItemAlt),
 			Handler:           self.reviewNextFile,
 			Description:       "Next review file",
+			Tag:               "review",
 			GetDisabledReason: self.reviewModeOnly,
 		},
 		{
@@ -181,6 +186,7 @@ func (self *GlobalController) GetKeybindings(opts types.KeybindingsOpts) []*type
 			Keys:              opts.GetKeys(opts.Config.Universal.PrevItem),
 			Handler:           self.reviewPrevFile,
 			Description:       "Previous review file",
+			Tag:               "review",
 			GetDisabledReason: self.reviewModeOnly,
 		},
 		{
@@ -188,6 +194,7 @@ func (self *GlobalController) GetKeybindings(opts types.KeybindingsOpts) []*type
 			Keys:              opts.GetKeys(opts.Config.Universal.PrevItemAlt),
 			Handler:           self.reviewPrevFile,
 			Description:       "Previous review file",
+			Tag:               "review",
 			GetDisabledReason: self.reviewModeOnly,
 		},
 		{
@@ -195,6 +202,7 @@ func (self *GlobalController) GetKeybindings(opts types.KeybindingsOpts) []*type
 			Keys:              opts.GetKeys(config.Keybinding{"J"}),
 			Handler:           self.reviewNextFile,
 			Description:       "Next review file",
+			Tag:               "review",
 			GetDisabledReason: self.reviewModeOnly,
 		},
 		{
@@ -202,6 +210,7 @@ func (self *GlobalController) GetKeybindings(opts types.KeybindingsOpts) []*type
 			Keys:              opts.GetKeys(config.Keybinding{"K"}),
 			Handler:           self.reviewPrevFile,
 			Description:       "Previous review file",
+			Tag:               "review",
 			GetDisabledReason: self.reviewModeOnly,
 		},
 		{
@@ -209,6 +218,7 @@ func (self *GlobalController) GetKeybindings(opts types.KeybindingsOpts) []*type
 			Keys:              opts.GetKeys(config.Keybinding{"J"}),
 			Handler:           self.reviewNextFile,
 			Description:       "Next review file",
+			Tag:               "review",
 			GetDisabledReason: self.reviewModeOnly,
 		},
 		{
@@ -216,6 +226,7 @@ func (self *GlobalController) GetKeybindings(opts types.KeybindingsOpts) []*type
 			Keys:              opts.GetKeys(config.Keybinding{"K"}),
 			Handler:           self.reviewPrevFile,
 			Description:       "Previous review file",
+			Tag:               "review",
 			GetDisabledReason: self.reviewModeOnly,
 		},
 		{
@@ -223,6 +234,7 @@ func (self *GlobalController) GetKeybindings(opts types.KeybindingsOpts) []*type
 			Keys:              opts.GetKeys(config.Keybinding{"a"}),
 			Handler:           self.reviewAcceptHunk,
 			Description:       "Accept review hunk",
+			Tag:               "review",
 			GetDisabledReason: self.reviewModeOnly,
 		},
 		{
@@ -230,6 +242,7 @@ func (self *GlobalController) GetKeybindings(opts types.KeybindingsOpts) []*type
 			Keys:              opts.GetKeys(config.Keybinding{"A"}),
 			Handler:           self.reviewAcceptFile,
 			Description:       "Accept review file",
+			Tag:               "review",
 			GetDisabledReason: self.reviewModeOnly,
 		},
 		{
@@ -237,6 +250,7 @@ func (self *GlobalController) GetKeybindings(opts types.KeybindingsOpts) []*type
 			Keys:              opts.GetKeys(config.Keybinding{"w"}),
 			Handler:           self.reviewToggleWrap,
 			Description:       "Toggle review diff wrap",
+			Tag:               "review",
 			GetDisabledReason: self.reviewModeOnly,
 		},
 		{
@@ -244,6 +258,7 @@ func (self *GlobalController) GetKeybindings(opts types.KeybindingsOpts) []*type
 			Keys:              opts.GetKeys(config.Keybinding{"j"}),
 			Handler:           self.reviewScrollDown,
 			Description:       "Scroll review diff down",
+			Tag:               "review",
 			GetDisabledReason: self.reviewModeOnly,
 		},
 		{
@@ -251,6 +266,7 @@ func (self *GlobalController) GetKeybindings(opts types.KeybindingsOpts) []*type
 			Keys:              opts.GetKeys(config.Keybinding{"k"}),
 			Handler:           self.reviewScrollUp,
 			Description:       "Scroll review diff up",
+			Tag:               "review",
 			GetDisabledReason: self.reviewModeOnly,
 		},
 		{
@@ -258,6 +274,7 @@ func (self *GlobalController) GetKeybindings(opts types.KeybindingsOpts) []*type
 			Keys:              opts.GetKeys(config.Keybinding{"h"}),
 			Handler:           self.reviewScrollLeft,
 			Description:       "Scroll review diff left",
+			Tag:               "review",
 			GetDisabledReason: self.reviewModeOnly,
 		},
 		{
@@ -265,6 +282,7 @@ func (self *GlobalController) GetKeybindings(opts types.KeybindingsOpts) []*type
 			Keys:              opts.GetKeys(config.Keybinding{"l"}),
 			Handler:           self.reviewScrollRight,
 			Description:       "Scroll review diff right",
+			Tag:               "review",
 			GetDisabledReason: self.reviewModeOnly,
 		},
 	}

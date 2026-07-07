@@ -16,7 +16,7 @@ type OptionsMenuAction struct {
 
 func (self *OptionsMenuAction) Call() error {
 	ctx := self.c.Context().Current()
-	local, global, navigation := self.getBindings(ctx)
+	sections := self.getBindings(ctx)
 
 	menuItems := []*types.MenuItem{}
 
@@ -53,9 +53,10 @@ func (self *OptionsMenuAction) Call() error {
 			})...)
 	}
 
-	appendBindings(local, &types.MenuSection{Title: self.c.Tr.KeybindingsMenuSectionLocal, Column: 1})
-	appendBindings(global, &types.MenuSection{Title: self.c.Tr.KeybindingsMenuSectionGlobal, Column: 1})
-	appendBindings(navigation, &types.MenuSection{Title: self.c.Tr.KeybindingsMenuSectionNavigation, Column: 1})
+	appendBindings(sections.review, &types.MenuSection{Title: "Review", Column: 1})
+	appendBindings(sections.local, &types.MenuSection{Title: self.c.Tr.KeybindingsMenuSectionLocal, Column: 1})
+	appendBindings(sections.global, &types.MenuSection{Title: self.c.Tr.KeybindingsMenuSectionGlobal, Column: 1})
+	appendBindings(sections.navigation, &types.MenuSection{Title: self.c.Tr.KeybindingsMenuSectionNavigation, Column: 1})
 
 	return self.c.Menu(types.CreateMenuOptions{
 		Title:                      self.c.Tr.Keybindings,
@@ -67,27 +68,45 @@ func (self *OptionsMenuAction) Call() error {
 	})
 }
 
-// Returns three slices of bindings: local, global, and navigation
-func (self *OptionsMenuAction) getBindings(context types.Context) ([]*types.Binding, []*types.Binding, []*types.Binding) {
-	var bindingsGlobal, bindingsPanel, bindingsNavigation []*types.Binding
+type keybindingMenuSections struct {
+	review     []*types.Binding
+	local      []*types.Binding
+	global     []*types.Binding
+	navigation []*types.Binding
+}
 
-	bindings, _ := self.c.GetInitialKeybindingsWithCustomCommands()
+func (self *OptionsMenuAction) getBindings(context types.Context) keybindingMenuSections {
+	var bindings []*types.Binding
 
+	bindings, _ = self.c.GetInitialKeybindingsWithCustomCommands()
+	return classifyKeybindingsForMenu(bindings, context.GetViewName(), self.c.Modes().Review.Active)
+}
+
+func classifyKeybindingsForMenu(bindings []*types.Binding, viewName string, reviewModeActive bool) keybindingMenuSections {
+	result := keybindingMenuSections{}
 	for _, binding := range bindings {
 		if binding.GetDescription() != "" {
-			if binding.ViewName == "" || binding.Tag == "global" {
-				bindingsGlobal = append(bindingsGlobal, binding)
-			} else if binding.ViewName == context.GetViewName() {
+			if reviewModeActive && binding.Tag == "review" {
+				result.review = append(result.review, binding)
+			} else if binding.Tag == "review" && binding.ViewName != "" {
+				continue
+			} else if binding.ViewName == "" || binding.Tag == "global" {
+				result.global = append(result.global, binding)
+			} else if binding.ViewName == viewName {
 				if binding.Tag == "navigation" {
-					bindingsNavigation = append(bindingsNavigation, binding)
+					result.navigation = append(result.navigation, binding)
 				} else {
-					bindingsPanel = append(bindingsPanel, binding)
+					result.local = append(result.local, binding)
 				}
 			}
 		}
 	}
 
-	return uniqueBindings(bindingsPanel), uniqueBindings(bindingsGlobal), uniqueBindings(bindingsNavigation)
+	result.review = uniqueBindings(result.review)
+	result.local = uniqueBindings(result.local)
+	result.global = uniqueBindings(result.global)
+	result.navigation = uniqueBindings(result.navigation)
+	return result
 }
 
 // We shouldn't really need to do this. We should define alternative keys for the same
