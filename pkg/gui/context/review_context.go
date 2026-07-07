@@ -3,6 +3,7 @@ package context
 import (
 	"fmt"
 
+	"github.com/jesseduffield/lazygit/pkg/gui/style"
 	"github.com/jesseduffield/lazygit/pkg/gui/types"
 	reviewcore "github.com/jesseduffield/lazygit/pkg/review"
 )
@@ -45,10 +46,9 @@ func NewReviewContext(c *ContextCommon) *ReviewContext {
 		items := viewModel.GetItems()
 		lines := make([][]string, 0, endIdx-startIdx)
 		for _, item := range items[startIdx:endIdx] {
-			hunks := reviewcore.Hunks(item.File.Reviewed, item.File.Current)
 			lines = append(lines, []string{
 				item.File.Meta.Path,
-				reviewHunkCountLabel(len(hunks)),
+				ReviewHunkProgressLabel(item.File),
 			})
 		}
 		return lines
@@ -84,9 +84,16 @@ func (r *ReviewContext) HandleRender() {
 	r.ListContextTrait.HandleRender()
 }
 
-func reviewHunkCountLabel(count int) string {
-	if count == 1 {
-		return "1 hunk remaining"
+func ReviewHunkProgressLabel(file reviewcore.ReviewFile) string {
+	reviewed := file.Meta.ReviewedHunkCount
+	total := file.Meta.TotalHunkCount
+	if total == 0 {
+		return style.FgGreen.Sprint("All")
 	}
-	return fmt.Sprintf("%d hunks remaining", count)
+
+	label := fmt.Sprintf("%d/%d hunks reviewed", reviewed, total)
+	if reviewed >= total {
+		return style.FgGreen.Sprint(label)
+	}
+	return style.FgYellow.Sprint(label)
 }

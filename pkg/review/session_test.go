@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 type fakeBackend struct {
@@ -144,4 +146,81 @@ func TestRenamedFileInitializesReviewedContentFromPreviousBasePath(t *testing.T)
 	if got := *session.Files[0].Meta.BasePathUsed; got != "old.txt" {
 		t.Fatalf("base path = %q, want old.txt", got)
 	}
+}
+
+func TestRefreshFilesInitializesHunkProgressFromRemainingHunks(t *testing.T) {
+	prFiles := []PrFile{{Path: "file.txt", ChangeType: "MODIFIED"}}
+	session := &Session{root: t.TempDir(), Manifest: Manifest{PR: testPR(prFiles)}}
+	backend := &fakeBackend{files: map[string]string{
+		"base:file.txt": "old\n",
+		"head:file.txt": "new\n",
+	}}
+
+	assert.NoError(t, session.RefreshFiles(backend, nil))
+
+	assert.Equal(t, 0, session.Files[0].Meta.ReviewedHunkCount)
+	assert.Equal(t, 1, session.Files[0].Meta.TotalHunkCount)
+}
+
+func TestAcceptHunkIncrementsReviewedHunkCount(t *testing.T) {
+	reviewed := "old one\nsame 1\nsame 2\nsame 3\nsame 4\nsame 5\nsame 6\nsame 7\nold two\n"
+	current := "new one\nsame 1\nsame 2\nsame 3\nsame 4\nsame 5\nsame 6\nsame 7\nnew two\n"
+	hunks := Hunks(reviewed, current)
+	session := &Session{
+		root: t.TempDir(),
+		Files: []ReviewFile{
+			{
+				Meta:     FileState{Path: "file.txt", TotalHunkCount: 2},
+				Reviewed: reviewed,
+				Current:  current,
+			},
+		},
+	}
+
+	outcome, err := session.AcceptHunkContentLocal(0, ApplyHunk(reviewed, hunks[0]))
+
+	assert.NoError(t, err)
+	assert.False(t, outcome.ShouldMarkViewed)
+	assert.Equal(t, 1, session.Files[0].Meta.ReviewedHunkCount)
+	assert.Equal(t, 2, session.Files[0].Meta.TotalHunkCount)
+}
+
+func TestAcceptFileCompletesHunkProgress(t *testing.T) {
+	session := &Session{
+		root: t.TempDir(),
+		Files: []ReviewFile{
+			{
+				Meta:     FileState{Path: "file.txt", ReviewedHunkCount: 1, TotalHunkCount: 3},
+				Reviewed: "old\n",
+				Current:  "new\n",
+			},
+		},
+	}
+
+	outcome, err := session.AcceptFileContentLocal(0, "new\n")
+
+	assert.NoError(t, err)
+	assert.True(t, outcome.ShouldMarkViewed)
+	assert.Equal(t, 3, session.Files[0].Meta.ReviewedHunkCount)
+	assert.Equal(t, 3, session.Files[0].Meta.TotalHunkCount)
+}
+
+func TestRefreshFilesPreservesReviewedHunkCountAndUpdatesTotal(t *testing.T) {
+	prFiles := []PrFile{{Path: "file.txt", ChangeType: "MODIFIED"}}
+	session := &Session{root: t.TempDir(), Manifest: Manifest{
+		PR: testPR(prFiles),
+		Files: []FileState{
+			{Path: "file.txt", ReviewedHunkCount: 2, TotalHunkCount: 4},
+		},
+	}}
+	assert.NoError(t, writeReviewed(session.reviewedPath("file.txt"), "old\n"))
+	backend := &fakeBackend{files: map[string]string{
+		"base:file.txt": "old\n",
+		"head:file.txt": "new\n",
+	}}
+
+	assert.NoError(t, session.RefreshFiles(backend, nil))
+
+	assert.Equal(t, 2, session.Files[0].Meta.ReviewedHunkCount)
+	assert.Equal(t, 3, session.Files[0].Meta.TotalHunkCount)
 }

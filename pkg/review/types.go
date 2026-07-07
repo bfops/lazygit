@@ -36,6 +36,8 @@ type FileState struct {
 	BasePathUsed        *string `json:"base_path_used,omitempty"`
 	BaseRefOIDUsed      *string `json:"base_ref_oid_used,omitempty"`
 	InitialReviewedHash *string `json:"initial_reviewed_hash,omitempty"`
+	ReviewedHunkCount   int     `json:"reviewed_hunk_count"`
+	TotalHunkCount      int     `json:"total_hunk_count"`
 	Unsupported         bool    `json:"unsupported"`
 }
 

@@ -126,6 +126,22 @@ func (s *Session) ApplyRefreshedFiles(files []ReviewFile) error {
 }
 
 func (s *Session) AcceptFileContentLocal(index int, content string) (AcceptedFileOutcome, error) {
+	return s.acceptFileContentLocal(index, content, func(file *ReviewFile, _ int) {
+		file.Meta.ReviewedHunkCount = file.Meta.TotalHunkCount
+	})
+}
+
+func (s *Session) AcceptHunkContentLocal(index int, content string) (AcceptedFileOutcome, error) {
+	return s.acceptFileContentLocal(index, content, func(file *ReviewFile, remaining int) {
+		file.Meta.ReviewedHunkCount++
+		file.Meta.TotalHunkCount = max(file.Meta.TotalHunkCount, file.Meta.ReviewedHunkCount+remaining)
+		if remaining == 0 {
+			file.Meta.ReviewedHunkCount = file.Meta.TotalHunkCount
+		}
+	})
+}
+
+func (s *Session) acceptFileContentLocal(index int, content string, updateProgress func(*ReviewFile, int)) (AcceptedFileOutcome, error) {
 	path := s.Files[index].Meta.Path
 	if err := writeReviewed(s.reviewedPath(path), content); err != nil {
 		return AcceptedFileOutcome{}, err
@@ -133,6 +149,8 @@ func (s *Session) AcceptFileContentLocal(index int, content string) (AcceptedFil
 
 	s.Files[index].Reviewed = content
 	s.Files[index].Meta.ReviewedHash = HashContent(content)
+	remaining := len(Hunks(s.Files[index].Reviewed, s.Files[index].Current))
+	updateProgress(&s.Files[index], remaining)
 	shouldMarkViewed := s.Files[index].Reviewed == s.Files[index].Current
 	s.Manifest.Files = make([]FileState, 0, len(s.Files))
 	for _, file := range s.Files {
@@ -204,6 +222,9 @@ func (s *Session) loadReviewFile(backend Backend, prFile PrFile, existing FileSt
 	if initial == "" && existing.InitialReviewedHash != nil {
 		initialReviewedHash = *existing.InitialReviewedHash
 	}
+	remainingHunks := len(Hunks(reviewed, current))
+	reviewedHunkCount := existing.ReviewedHunkCount
+	totalHunkCount := reviewedHunkCount + remainingHunks
 	previousPath := optionalString(prFile.PreviousPath)
 	return ReviewFile{
 		Meta: FileState{
@@ -215,6 +236,8 @@ func (s *Session) loadReviewFile(backend Backend, prFile PrFile, existing FileSt
 			BasePathUsed:        &basePath,
 			BaseRefOIDUsed:      &baseRefOID,
 			InitialReviewedHash: &initialReviewedHash,
+			ReviewedHunkCount:   reviewedHunkCount,
+			TotalHunkCount:      totalHunkCount,
 		},
 		Reviewed: reviewed,
 		Current:  current,

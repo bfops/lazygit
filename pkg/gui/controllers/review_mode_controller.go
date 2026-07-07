@@ -81,7 +81,7 @@ func (r *ReviewController) reviewMainTitle() string {
 		return "Review Hunk"
 	}
 	file := session.Files[clamp(r.c.Modes().Review.FileIndex, 0, len(session.Files)-1)]
-	return fmt.Sprintf("%s - %s", file.Meta.Path, remainingHunksLabel(len(reviewcore.Hunks(file.Reviewed, file.Current))))
+	return fmt.Sprintf("%s - %s", file.Meta.Path, context.ReviewHunkProgressLabel(file))
 }
 
 func (r *ReviewController) reviewDiffSubtitle() string {
@@ -248,7 +248,7 @@ func (self *GlobalController) reviewAcceptHunk() error {
 	}
 	hunkIndex := clamp(self.c.Modes().Review.HunkIndex, 0, len(hunks)-1)
 	next := reviewcore.ApplyHunk(session.Files[fileIndex].Reviewed, hunks[hunkIndex])
-	outcome, err := session.AcceptFileContentLocal(fileIndex, next)
+	outcome, err := session.AcceptHunkContentLocal(fileIndex, next)
 	if err != nil {
 		self.c.ErrorToast(err.Error())
 		return nil
@@ -256,10 +256,10 @@ func (self *GlobalController) reviewAcceptHunk() error {
 	remaining := len(reviewcore.Hunks(session.Files[fileIndex].Reviewed, session.Files[fileIndex].Current))
 	if remaining == 0 {
 		self.c.Modes().Review.HunkIndex = 0
-		self.c.Modes().Review.Message = "accepted hunk, file caught up"
+		self.c.Modes().Review.Message = "accepted hunk, file reviewed"
 	} else {
 		self.c.Modes().Review.HunkIndex = clamp(self.c.Modes().Review.HunkIndex, 0, remaining-1)
-		self.c.Modes().Review.Message = fmt.Sprintf("accepted hunk, %d left", remaining)
+		self.c.Modes().Review.Message = fmt.Sprintf("accepted hunk, %s", context.ReviewHunkProgressLabel(session.Files[fileIndex]))
 	}
 	self.c.Modes().Review.DiffVerticalOffset = 0
 	self.appendReviewLog("accepted hunk in " + outcome.Path)
@@ -419,7 +419,7 @@ func reviewDiffContent(mode reviewmode.Review, session *reviewcore.Session) stri
 	var b strings.Builder
 	b.WriteString(file.Meta.Path)
 	b.WriteString(" ")
-	b.WriteString(remainingHunksLabel(len(hunks)))
+	b.WriteString(context.ReviewHunkProgressLabel(file))
 	b.WriteString("\n\n")
 	if len(hunks) == 0 {
 		b.WriteString("File caught up to latest PR content\n")
@@ -461,13 +461,6 @@ func (self *GlobalController) appendReviewLog(message string) {
 		logs = logs[len(logs)-100:]
 	}
 	self.c.Model().ReviewLogs = logs
-}
-
-func remainingHunksLabel(count int) string {
-	if count == 1 {
-		return "1 hunk remaining"
-	}
-	return fmt.Sprintf("%d hunks remaining", count)
 }
 
 func displayLineText(text string) string {
