@@ -88,7 +88,7 @@ func ReviewHunkProgressLabel(file reviewcore.ReviewFile) string {
 	reviewed := file.Meta.ReviewedHunkCount
 	total := file.Meta.TotalHunkCount
 	if total == 0 {
-		return style.FgGreen.Sprint("All")
+		return style.FgGreen.Sprint("File reviewed")
 	}
 
 	label := fmt.Sprintf("%d/%d hunks reviewed", reviewed, total)

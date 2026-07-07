@@ -10,7 +10,7 @@ import (
 
 func TestReviewHunkProgressLabel(t *testing.T) {
 	assert.Equal(t,
-		style.FgGreen.Sprint("All"),
+		style.FgGreen.Sprint("File reviewed"),
 		ReviewHunkProgressLabel(reviewcore.ReviewFile{}),
 	)
 	assert.Equal(t,
