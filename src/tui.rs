@@ -8,10 +8,10 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Terminal;
 
 use crate::diff_model::{apply_hunk, hunks, DiffLine};
@@ -34,6 +34,7 @@ struct App {
     logs: LogBuffer,
     refresh_pending: bool,
     pending_marks: usize,
+    show_help: bool,
 }
 
 impl App {
@@ -47,6 +48,7 @@ impl App {
             logs,
             refresh_pending: false,
             pending_marks: 0,
+            show_help: false,
         }
     }
 }
@@ -104,8 +106,18 @@ fn handle_key(
     worker: &JobWorker,
     app: &mut App,
 ) -> Result<bool> {
+    if app.show_help {
+        match key.code {
+            KeyCode::Char('q') => return Ok(true),
+            KeyCode::Char('?') | KeyCode::Esc => app.show_help = false,
+            _ => {}
+        }
+        return Ok(false);
+    }
+
     match key.code {
         KeyCode::Char('q') => return Ok(true),
+        KeyCode::Char('?') => app.show_help = true,
         KeyCode::Down => {
             if app.file_index + 1 < session.files.len() {
                 app.file_index += 1;
@@ -342,16 +354,14 @@ fn draw(frame: &mut ratatui::Frame, session: &ReviewSession, app: &App) {
         Paragraph::new(log_lines(app)).block(Block::default().title("Log").borders(Borders::ALL)),
         right[1],
     );
-    let help = format!(
-        "Up/Down file  [/]/n/p hunk  hjkl diff scroll  a accept  A accept file  w wrap/scroll  r refresh  q quit  {}  {}  {}",
-        mode_label(&app.prefs),
-        job_label(app),
-        app.message
-    );
     frame.render_widget(
-        Paragraph::new(help).block(Block::default().title("Keys").borders(Borders::ALL)),
+        Paragraph::new(status_line(app))
+            .block(Block::default().title("Status").borders(Borders::ALL)),
         right[2],
     );
+    if app.show_help {
+        render_help_popup(frame, frame.area());
+    }
 }
 
 fn job_label(app: &App) -> String {
@@ -361,6 +371,62 @@ fn job_label(app: &App) -> String {
         "refresh=idle"
     };
     format!("{refresh} marks={}", app.pending_marks)
+}
+
+fn status_line(app: &App) -> String {
+    let mut parts = vec!["? help".to_owned(), mode_label(&app.prefs), job_label(app)];
+    if !app.message.is_empty() {
+        parts.push(app.message.clone());
+    }
+    parts.join(" | ")
+}
+
+fn render_help_popup(frame: &mut ratatui::Frame, area: Rect) {
+    let popup = centered_rect(72, 70, area);
+    let help = Paragraph::new(help_lines())
+        .block(Block::default().title("Help").borders(Borders::ALL))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(Clear, popup);
+    frame.render_widget(help, popup);
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+
+    let horizontal = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(vertical[1]);
+
+    horizontal[1]
+}
+
+fn help_lines() -> Vec<Line<'static>> {
+    vec![
+        Line::from("? / Esc    close help"),
+        Line::from("q          quit"),
+        Line::from("Up/Down    select file"),
+        Line::from("[ ]        previous/next hunk"),
+        Line::from("p / n      previous/next hunk"),
+        Line::from("j / k      scroll diff down/up"),
+        Line::from("h / l      scroll left/right in scroll mode; up/down in wrap mode"),
+        Line::from("PageUp/PageDown, Home/End    jump diff view"),
+        Line::from("a          accept selected hunk"),
+        Line::from("A          accept all hunks in selected file"),
+        Line::from("w          toggle wrap/scroll diff mode"),
+        Line::from("r          refresh PR contents"),
+    ]
 }
 
 fn diff_lines(session: &ReviewSession, app: &App) -> Vec<Line<'static>> {
@@ -547,6 +613,53 @@ mod tests {
         app.pending_marks = 2;
 
         assert_eq!(job_label(&app), "refresh=pending marks=2");
+    }
+
+    #[test]
+    fn status_line_is_compact() {
+        let logs = LogBuffer::new(5);
+        let mut app = App::new(Preferences::default(), logs);
+        app.message = "ready".into();
+
+        let status = status_line(&app);
+
+        assert!(status.contains("? help"));
+        assert!(status.contains("mode="));
+        assert!(status.contains("refresh="));
+        assert!(status.contains("ready"));
+        assert!(!status.contains("accept selected hunk"));
+        assert!(!status.contains("Up/Down"));
+    }
+
+    #[test]
+    fn status_line_omits_empty_message() {
+        let logs = LogBuffer::new(5);
+        let app = App::new(Preferences::default(), logs);
+
+        assert_eq!(
+            status_line(&app),
+            "? help | mode=wrap | refresh=idle marks=0"
+        );
+    }
+
+    #[test]
+    fn help_lines_include_primary_bindings() {
+        let text = help_lines()
+            .into_iter()
+            .map(|line| {
+                line.spans
+                    .into_iter()
+                    .map(|span| span.content)
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(text.contains("? / Esc"));
+        assert!(text.contains("a          accept selected hunk"));
+        assert!(text.contains("A          accept all hunks"));
+        assert!(text.contains("w          toggle wrap/scroll"));
+        assert!(text.contains("r          refresh"));
     }
 
     #[test]
