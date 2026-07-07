@@ -4,7 +4,9 @@ type PrMeta struct {
 	ID             string   `json:"id"`
 	Number         int      `json:"number"`
 	URL            string   `json:"url"`
+	BaseRefName    string   `json:"base_ref_name"`
 	BaseRefOID     string   `json:"base_ref_oid"`
+	HeadRefName    string   `json:"head_ref_name"`
 	HeadRefOID     string   `json:"head_ref_oid"`
 	Files          []PrFile `json:"files"`
 	HeadRepository *RepoRef `json:"head_repository"`
@@ -23,8 +25,9 @@ type PrFile struct {
 }
 
 type Manifest struct {
-	PR    PrMeta      `json:"pr"`
-	Files []FileState `json:"files"`
+	PR                PrMeta      `json:"pr"`
+	FetchedHeadRefOID string      `json:"fetched_head_ref_oid,omitempty"`
+	Files             []FileState `json:"files"`
 }
 
 type FileState struct {
@@ -70,6 +73,8 @@ type Hunk struct {
 }
 
 type Backend interface {
+	EnsurePRRefs(pr PrMeta) error
+	ChangedFilesBetween(repo string, fromRef string, toRef string, files []PrFile) (map[string]bool, error)
 	FileAtRef(repo string, ref string, path string) (string, bool, error)
 	MarkFileViewed(pullRequestID string, path string) error
 }

@@ -91,9 +91,9 @@ func ReviewHunkProgressLabel(file reviewcore.ReviewFile) string {
 		return style.FgGreen.Sprint("File reviewed")
 	}
 
-	label := fmt.Sprintf("%d/%d hunks reviewed", reviewed, total)
 	if reviewed >= total {
-		return style.FgGreen.Sprint(label)
+		return style.FgGreen.Sprint("File reviewed")
 	}
+	label := fmt.Sprintf("%d/%d hunks reviewed", reviewed, total)
 	return style.FgYellow.Sprint(label)
 }

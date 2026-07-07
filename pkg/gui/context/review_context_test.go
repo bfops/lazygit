@@ -18,7 +18,7 @@ func TestReviewHunkProgressLabel(t *testing.T) {
 		ReviewHunkProgressLabel(reviewcore.ReviewFile{Meta: reviewcore.FileState{ReviewedHunkCount: 1, TotalHunkCount: 3}}),
 	)
 	assert.Equal(t,
-		style.FgGreen.Sprint("3/3 hunks reviewed"),
+		style.FgGreen.Sprint("File reviewed"),
 		ReviewHunkProgressLabel(reviewcore.ReviewFile{Meta: reviewcore.FileState{ReviewedHunkCount: 3, TotalHunkCount: 3}}),
 	)
 }

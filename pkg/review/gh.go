@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -27,7 +28,7 @@ func (g *Gh) ResolvePR(pr string) (PrMeta, error) {
 	if pr != "" {
 		args = append(args, pr)
 	}
-	args = append(args, "--json", "id,number,url,baseRefOid,headRefOid,files,headRepository")
+	args = append(args, "--json", "id,number,url,baseRefName,baseRefOid,headRefName,headRefOid,files,headRepository")
 
 	output, err := runGh(args...)
 	if err != nil {
@@ -35,12 +36,14 @@ func (g *Gh) ResolvePR(pr string) (PrMeta, error) {
 	}
 
 	var response struct {
-		ID         string `json:"id"`
-		Number     int    `json:"number"`
-		URL        string `json:"url"`
-		BaseRefOID string `json:"baseRefOid"`
-		HeadRefOID string `json:"headRefOid"`
-		Files      []struct {
+		ID          string `json:"id"`
+		Number      int    `json:"number"`
+		URL         string `json:"url"`
+		BaseRefName string `json:"baseRefName"`
+		BaseRefOID  string `json:"baseRefOid"`
+		HeadRefName string `json:"headRefName"`
+		HeadRefOID  string `json:"headRefOid"`
+		Files       []struct {
 			Path         string `json:"path"`
 			PreviousPath string `json:"previousPath"`
 			Additions    int    `json:"additions"`
@@ -74,7 +77,9 @@ func (g *Gh) ResolvePR(pr string) (PrMeta, error) {
 		ID:             response.ID,
 		Number:         response.Number,
 		URL:            response.URL,
+		BaseRefName:    response.BaseRefName,
 		BaseRefOID:     response.BaseRefOID,
+		HeadRefName:    response.HeadRefName,
 		HeadRefOID:     response.HeadRefOID,
 		Files:          files,
 		HeadRepository: headRepository,
@@ -86,54 +91,59 @@ func (g *Gh) ResolvePR(pr string) (PrMeta, error) {
 	return meta, nil
 }
 
-func (g *Gh) FileAtRef(repo string, ref string, path string) (string, bool, error) {
-	owner, name, host := splitRepo(repo)
-	query := `
-query($owner: String!, $name: String!, $expr: String!) {
-  repository(owner: $owner, name: $name) {
-    object(expression: $expr) {
-      ... on Blob {
-        isBinary
-        text
-        byteSize
-      }
-    }
-  }
-}
-`
-	args := []string{"api", "graphql", "-f", "query=" + query, "-F", "owner=" + owner, "-F", "name=" + name, "-F", "expr=" + ref + ":" + path}
-	if host != "" && host != "github.com" {
-		args = append(args, "--hostname", host)
+func (g *Gh) EnsurePRRefs(pr PrMeta) error {
+	missingBase := !gitObjectExists(pr.BaseRefOID)
+	missingHead := !gitObjectExists(pr.HeadRefOID)
+	if !missingBase && !missingHead {
+		return nil
 	}
-	output, err := runGh(args...)
+
+	repoURL := gitRepoURL(pr)
+	if missingHead {
+		if _, err := runGit("fetch", "--no-tags", repoURL, fmt.Sprintf("refs/pull/%d/head", pr.Number)); err != nil {
+			return err
+		}
+	}
+	if missingBase && pr.BaseRefName != "" {
+		if _, err := runGit("fetch", "--no-tags", repoURL, "refs/heads/"+pr.BaseRefName); err != nil {
+			return err
+		}
+	}
+
+	missing := []string{}
+	if !gitObjectExists(pr.BaseRefOID) {
+		missing = append(missing, "base "+pr.BaseRefOID)
+	}
+	if !gitObjectExists(pr.HeadRefOID) {
+		missing = append(missing, "head "+pr.HeadRefOID)
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing git objects after fetch: %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+func (g *Gh) ChangedFilesBetween(_ string, fromRef string, toRef string, files []PrFile) (map[string]bool, error) {
+	args := []string{"diff", "--name-status", "-M", fromRef, toRef, "--"}
+	for _, file := range files {
+		args = append(args, file.Path)
+		if file.PreviousPath != "" {
+			args = append(args, file.PreviousPath)
+		}
+	}
+	output, err := runGit(args...)
+	if err != nil {
+		return nil, err
+	}
+	return parseChangedFiles(output), nil
+}
+
+func (g *Gh) FileAtRef(repo string, ref string, path string) (string, bool, error) {
+	output, err := runGit("show", ref+":"+path)
 	if err != nil {
 		return "", false, err
 	}
-
-	var response struct {
-		Data struct {
-			Repository struct {
-				Object *struct {
-					IsBinary bool    `json:"isBinary"`
-					Text     *string `json:"text"`
-					ByteSize int     `json:"byteSize"`
-				} `json:"object"`
-			} `json:"repository"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal([]byte(output), &response); err != nil {
-		return "", false, err
-	}
-	if response.Data.Repository.Object == nil {
-		return "", false, nil
-	}
-	if response.Data.Repository.Object.IsBinary {
-		return "", true, nil
-	}
-	if response.Data.Repository.Object.Text == nil {
-		return "", false, nil
-	}
-	return *response.Data.Repository.Object.Text, false, nil
+	return output, false, nil
 }
 
 func (g *Gh) MarkFileViewed(pullRequestID string, path string) error {
@@ -217,6 +227,53 @@ func runGh(args ...string) (string, error) {
 		return "", fmt.Errorf("command %q failed: %w\n%s", append([]string{"gh"}, args...), err, string(output))
 	}
 	return string(output), nil
+}
+
+func runGit(args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("command %q failed: %w\n%s", append([]string{"git"}, args...), err, string(output))
+	}
+	return string(output), nil
+}
+
+func gitObjectExists(ref string) bool {
+	if ref == "" {
+		return false
+	}
+	_, err := runGit("cat-file", "-e", ref+"^{object}")
+	return err == nil
+}
+
+func parseChangedFiles(output string) map[string]bool {
+	result := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) < 2 {
+			continue
+		}
+		if strings.HasPrefix(parts[0], "R") || strings.HasPrefix(parts[0], "C") {
+			if len(parts) >= 3 {
+				result[parts[1]] = true
+				result[parts[2]] = true
+			}
+			continue
+		}
+		result[parts[1]] = true
+	}
+	return result
+}
+
+func gitRepoURL(pr PrMeta) string {
+	repo := baseRepoName(pr)
+	if strings.HasPrefix(pr.URL, "http://") {
+		return "http://" + filepath.ToSlash(filepath.Join("github.com", repo)) + ".git"
+	}
+	return "https://" + filepath.ToSlash(filepath.Join("github.com", repo)) + ".git"
 }
 
 func splitRepo(repo string) (owner string, name string, host string) {

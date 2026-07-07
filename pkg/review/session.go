@@ -39,6 +39,9 @@ func LoadSession(root string, pr PrMeta) (*Session, error) {
 	if err := os.MkdirAll(filepath.Join(sessionRoot, "reviewed"), 0o755); err != nil {
 		return nil, err
 	}
+	if err := os.MkdirAll(filepath.Join(sessionRoot, "current"), 0o755); err != nil {
+		return nil, err
+	}
 
 	manifest := Manifest{PR: pr, Files: []FileState{}}
 	manifestPath := filepath.Join(sessionRoot, "manifest.json")
@@ -57,11 +60,16 @@ func LoadSession(root string, pr PrMeta) (*Session, error) {
 func (s *Session) RefreshFiles(backend Backend, progress func(string)) error {
 	const concurrency = 8
 
+	if err := backend.EnsurePRRefs(s.Manifest.PR); err != nil {
+		return err
+	}
+
 	files := make([]ReviewFile, len(s.Manifest.PR.Files))
 	existing := map[string]FileState{}
 	for _, state := range s.Manifest.Files {
 		existing[state.Path] = state
 	}
+	changedPaths, fetchAllCurrent := s.changedPathsForRefresh(backend, progress)
 
 	type result struct {
 		index int
@@ -80,7 +88,7 @@ func (s *Session) RefreshFiles(backend Backend, progress func(string)) error {
 			defer wg.Done()
 			for idx := range jobs {
 				prFile := s.Manifest.PR.Files[idx]
-				file, err := s.loadReviewFile(backend, prFile, existing[prFile.Path])
+				file, err := s.loadReviewFile(backend, prFile, existing[prFile.Path], s.shouldFetchCurrent(prFile, changedPaths, fetchAllCurrent))
 				results <- result{index: idx, file: file, err: err}
 			}
 		}()
@@ -117,12 +125,46 @@ func (s *Session) RefreshFiles(backend Backend, progress func(string)) error {
 }
 
 func (s *Session) ApplyRefreshedFiles(files []ReviewFile) error {
+	if err := s.writeCurrentCache(files); err != nil {
+		return err
+	}
 	s.Files = files
+	s.Manifest.FetchedHeadRefOID = s.Manifest.PR.HeadRefOID
 	s.Manifest.Files = make([]FileState, 0, len(files))
 	for _, file := range files {
 		s.Manifest.Files = append(s.Manifest.Files, file.Meta)
 	}
 	return s.Save()
+}
+
+func (s *Session) changedPathsForRefresh(backend Backend, progress func(string)) (map[string]bool, bool) {
+	if s.Manifest.FetchedHeadRefOID == "" {
+		return nil, true
+	}
+	if s.Manifest.FetchedHeadRefOID == s.Manifest.PR.HeadRefOID {
+		return map[string]bool{}, false
+	}
+	changedPaths, err := backend.ChangedFilesBetween(headRepoName(s.Manifest.PR), s.Manifest.FetchedHeadRefOID, s.Manifest.PR.HeadRefOID, s.Manifest.PR.Files)
+	if err != nil {
+		if progress != nil {
+			progress("warning: failed to compare cached review head with latest head; refreshing all files: " + err.Error())
+		}
+		return nil, true
+	}
+	return changedPaths, false
+}
+
+func (s *Session) shouldFetchCurrent(file PrFile, changedPaths map[string]bool, fetchAllCurrent bool) bool {
+	if fetchAllCurrent || strings.EqualFold(file.ChangeType, "DELETED") {
+		return fetchAllCurrent
+	}
+	if _, err := os.Stat(s.currentPath(file.Path)); os.IsNotExist(err) {
+		return true
+	}
+	if changedPaths[file.Path] {
+		return true
+	}
+	return file.PreviousPath != "" && changedPaths[file.PreviousPath]
 }
 
 func (s *Session) AcceptFileContentLocal(index int, content string) (AcceptedFileOutcome, error) {
@@ -174,7 +216,7 @@ func (s *Session) Save() error {
 	return os.WriteFile(filepath.Join(sessionRoot, "manifest.json"), bytes, 0o644)
 }
 
-func (s *Session) loadReviewFile(backend Backend, prFile PrFile, existing FileState) (ReviewFile, error) {
+func (s *Session) loadReviewFile(backend Backend, prFile PrFile, existing FileState, fetchCurrent bool) (ReviewFile, error) {
 	reviewedPath := s.reviewedPath(prFile.Path)
 	_, statErr := os.Stat(reviewedPath)
 	needsInitial := os.IsNotExist(statErr)
@@ -198,7 +240,7 @@ func (s *Session) loadReviewFile(backend Backend, prFile PrFile, existing FileSt
 	if err != nil {
 		return ReviewFile{}, err
 	}
-	current, err := currentContent(backend, s.Manifest.PR, prFile)
+	current, err := s.currentContent(backend, prFile, fetchCurrent)
 	if err != nil {
 		return ReviewFile{}, err
 	}
@@ -302,11 +344,20 @@ func initialContent(backend Backend, pr PrMeta, file PrFile) (string, error) {
 	return content, err
 }
 
-func currentContent(backend Backend, pr PrMeta, file PrFile) (string, error) {
+func (s *Session) currentContent(backend Backend, file PrFile, fetchCurrent bool) (string, error) {
 	if strings.EqualFold(file.ChangeType, "DELETED") {
 		return "", nil
 	}
-	content, _, err := backend.FileAtRef(headRepoName(pr), pr.HeadRefOID, file.Path)
+	if !fetchCurrent {
+		bytes, err := os.ReadFile(s.currentPath(file.Path))
+		if err == nil {
+			return string(bytes), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+	}
+	content, _, err := backend.FileAtRef(headRepoName(s.Manifest.PR), s.Manifest.PR.HeadRefOID, file.Path)
 	return content, err
 }
 
@@ -354,6 +405,26 @@ func sessionRoot(root string, pr PrMeta) string {
 
 func (s *Session) reviewedPath(path string) string {
 	return filepath.Join(sessionRoot(s.root, s.Manifest.PR), "reviewed", filepath.FromSlash(path))
+}
+
+func (s *Session) currentPath(path string) string {
+	return filepath.Join(sessionRoot(s.root, s.Manifest.PR), "current", filepath.FromSlash(path))
+}
+
+func (s *Session) writeCurrentCache(files []ReviewFile) error {
+	currentRoot := filepath.Join(sessionRoot(s.root, s.Manifest.PR), "current")
+	if err := os.RemoveAll(currentRoot); err != nil {
+		return err
+	}
+	for _, file := range files {
+		if strings.EqualFold(file.Meta.ChangeType, "DELETED") {
+			continue
+		}
+		if err := writeReviewed(filepath.Join(currentRoot, filepath.FromSlash(file.Meta.Path)), file.Current); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func writeReviewed(path string, content string) error {
